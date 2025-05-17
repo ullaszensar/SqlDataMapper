@@ -5,10 +5,9 @@ def parse_excel_mapping(excel_file):
     Parse Excel file with mapping information.
     
     Expected columns:
-    - Source Table: The original table name
-    - Target Table: The table name to map to
-    - Source Field: The original field name
-    - Target Field: The field name to map to
+    - FieldSQL: The original field name in SQL
+    - Map_Field: The field name to map to
+    - tableName: The table name to add to the query
     
     Args:
         excel_file: Uploaded Excel file object
@@ -21,7 +20,7 @@ def parse_excel_mapping(excel_file):
         df = pd.read_excel(excel_file)
         
         # Verify required columns exist
-        required_columns = ['Source Table', 'Target Table', 'Source Field', 'Target Field']
+        required_columns = ['FieldSQL', 'Map_Field', 'tableName']
         missing_columns = [col for col in required_columns if col not in df.columns]
         
         if missing_columns:
@@ -45,12 +44,11 @@ def parse_excel_mapping(excel_file):
             if missing_columns:
                 raise ValueError(f"Required columns missing from Excel file: {', '.join(missing_columns)}")
         
-        # Drop rows where both source and target tables are NaN
-        df = df.dropna(subset=['Source Table', 'Target Table'], how='all')
+        # Drop rows with missing required values
+        df = df.dropna(subset=['FieldSQL', 'Map_Field'], how='any')
         
-        # Fill NaN values in Source Field and Target Field with empty strings
-        df['Source Field'] = df['Source Field'].fillna('')
-        df['Target Field'] = df['Target Field'].fillna('')
+        # Fill NaN values in tableName with empty strings
+        df['tableName'] = df['tableName'].fillna('')
         
         return df
     

@@ -2,133 +2,88 @@ import sqlparse
 import re
 from sql_analyzer import extract_field_with_table
 
-def rewrite_query(sql_query, table_mappings, mapping_df):
+def rewrite_query(sql_query, mapping_df):
     """
-    Rewrite a SQL query based on the provided table mappings and field mappings.
+    Rewrite SQL queries based on field mappings from Excel.
     
     Args:
-        sql_query (str): Original SQL query
-        table_mappings (dict): Dictionary mapping source tables to target tables
+        sql_query (str): Original SQL query or multiple queries
         mapping_df (pandas.DataFrame): DataFrame with field mapping information
         
     Returns:
-        str: Rewritten SQL query
+        str: Rewritten SQL query or queries
     """
-    # Create a field mapping dictionary based on the mapping DataFrame
-    field_mappings = {}
+    # Parse the SQL queries
+    parsed_queries = sqlparse.parse(sql_query)
     
-    for _, row in mapping_df.iterrows():
-        source_table = row['Source Table']
-        source_field = row['Source Field']
-        target_field = row['Target Field']
-        
-        if source_table and source_field and target_field:
-            if source_table not in field_mappings:
-                field_mappings[source_table] = {}
-            
-            field_mappings[source_table][source_field] = target_field
-    
-    # Parse the SQL query
-    parsed = sqlparse.parse(sql_query)
-    
-    if not parsed:
+    if not parsed_queries:
         raise ValueError("Failed to parse SQL query")
     
-    # Get the SQL statement as a string for regex operations
-    sql_str = str(parsed[0])
+    rewritten_queries = []
     
-    # 1. Replace table names in FROM and JOIN clauses
-    for source_table, target_table in table_mappings.items():
-        if not target_table:  # Skip if no mapping is provided
-            continue
+    # Process each query separately
+    for parsed_query in parsed_queries:
+        # Get the SQL statement as a string for regex operations
+        sql_str = str(parsed_query)
         
-        # FROM clause pattern
-        from_pattern = r'(?i)FROM\s+([`"\[]?)' + re.escape(source_table) + r'([`"\]]?)'
-        sql_str = re.sub(from_pattern, f'FROM \\1{target_table}\\2', sql_str)
-        
-        # JOIN clause pattern
-        join_pattern = r'(?i)JOIN\s+([`"\[]?)' + re.escape(source_table) + r'([`"\]]?)'
-        sql_str = re.sub(join_pattern, f'JOIN \\1{target_table}\\2', sql_str)
-        
-        # Table alias pattern - find instances of "source_table AS alias"
-        alias_pattern = r'(?i)([`"\[]?)' + re.escape(source_table) + r'([`"\]]?)\s+AS\s+([a-zA-Z0-9_]+)'
-        alias_matches = re.findall(alias_pattern, sql_str)
-        
-        # Keep track of aliases for this table
-        table_aliases = []
-        for match in alias_matches:
-            table_aliases.append(match[2])  # The alias is in the third group
-            # Replace the table name in the "table AS alias" pattern
-            pattern = r'(?i)' + re.escape(match[0]) + re.escape(source_table) + re.escape(match[1]) + r'\s+AS\s+' + re.escape(match[2])
-            sql_str = re.sub(pattern, f'{match[0]}{target_table}{match[1]} AS {match[2]}', sql_str)
-    
-    # 2. Extract table.field pairs for replacement
-    table_field_pairs = extract_field_with_table(sql_query)
-    
-    # 3. Replace fields in SELECT, WHERE, GROUP BY, etc.
-    for source_table, source_field in table_field_pairs:
-        # Get the target table
-        target_table = table_mappings.get(source_table)
-        
-        if not target_table:
-            continue  # Skip if no table mapping
-        
-        # Get the target field
-        target_field = None
-        if source_table in field_mappings and source_field in field_mappings[source_table]:
-            target_field = field_mappings[source_table][source_field]
-        else:
-            target_field = source_field  # Keep the same field name if no mapping
-        
-        # Replace table.field instances
-        table_field_pattern = r'([`"\[]?)' + re.escape(source_table) + r'([`"\]]?)\.([`"\[]?)' + re.escape(source_field) + r'([`"\]]?)'
-        sql_str = re.sub(table_field_pattern, f'\\1{target_table}\\2.\\3{target_field}\\4', sql_str)
-    
-    # 4. Handle SELECT clause fields more carefully
-    select_pattern = r'(?i)SELECT\s+(.*?)\s+FROM'
-    select_match = re.search(select_pattern, sql_str, re.DOTALL)
-    
-    if select_match:
-        select_clause = select_match.group(1)
-        new_select_clause = select_clause
-        
-        # Split the select clause by commas
-        fields = [f.strip() for f in select_clause.split(',')]
-        
-        for i, field in enumerate(fields):
-            # Check if this is an aliased field
-            as_match = re.search(r'(?i)(.*?)\s+AS\s+([a-zA-Z0-9_]+)$', field)
+        # Replace fields based on the mapping DataFrame
+        for _, row in mapping_df.iterrows():
+            field_sql = row['FieldSQL']
+            map_field = row['Map_Field']
+            table_name = row['tableName']
             
-            if as_match:
-                field_expr = as_match.group(1).strip()
-                alias = as_match.group(2).strip()
+            if not field_sql or not map_field:
+                continue  # Skip rows with missing required values
+            
+            # Pattern to match the field (can be standalone or within a function)
+            field_pattern = r'(?<![a-zA-Z0-9_])' + re.escape(field_sql) + r'(?![a-zA-Z0-9_])'
+            
+            # If table name is provided, prepare the replacement with table name
+            if table_name:
+                replacement = f"{table_name}.{map_field}"
+            else:
+                replacement = map_field
                 
-                # Try to extract the table and field from field_expr
-                table_field_match = re.search(r'([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)', field_expr)
-                
-                if table_field_match:
-                    source_table = table_field_match.group(1)
-                    source_field = table_field_match.group(2)
-                    
-                    target_table = table_mappings.get(source_table)
-                    if target_table:
-                        target_field = None
-                        if source_table in field_mappings and source_field in field_mappings[source_table]:
-                            target_field = field_mappings[source_table][source_field]
-                        else:
-                            target_field = source_field
-                        
-                        # Replace the field expression but keep the alias
-                        field_expr = field_expr.replace(f"{source_table}.{source_field}", f"{target_table}.{target_field}")
-                        fields[i] = f"{field_expr} AS {alias}"
+            # Replace all occurrences of the field with the mapped field
+            sql_str = re.sub(field_pattern, replacement, sql_str)
+            
+            # Handle fields inside functions
+            func_pattern = r'(\w+\()' + re.escape(field_sql) + r'(\))'
+            if table_name:
+                func_replacement = f"\\1{table_name}.{map_field}\\2"
+            else:
+                func_replacement = f"\\1{map_field}\\2"
+            sql_str = re.sub(func_pattern, func_replacement, sql_str)
+            
+            # Handle aliased fields in SELECT clause
+            # Look for "field_sql AS alias" pattern
+            alias_pattern = re.escape(field_sql) + r'\s+(?i)AS\s+([a-zA-Z0-9_]+)'
+            alias_matches = re.findall(alias_pattern, sql_str)
+            
+            for alias in alias_matches:
+                old_pattern = f"{field_sql} AS {alias}"
+                if table_name:
+                    new_pattern = f"{table_name}.{map_field} AS {alias}"
+                else:
+                    new_pattern = f"{map_field} AS {alias}"
+                sql_str = sql_str.replace(old_pattern, new_pattern)
         
-        # Join the fields back together
-        new_select_clause = ', '.join(fields)
+        # Format the SQL query for better readability
+        rewritten_query = sqlparse.format(sql_str, reindent=True, keyword_case='upper')
+        rewritten_queries.append(rewritten_query)
+    
+    # Join multiple queries with semicolons
+    return '\n\n'.join(rewritten_queries)
+
+def process_multiple_queries(sql_queries, mapping_df):
+    """
+    Process multiple SQL queries from a string.
+    
+    Args:
+        sql_queries (str): String containing one or more SQL queries
+        mapping_df (pandas.DataFrame): DataFrame with field mapping information
         
-        # Replace the select clause in the query
-        sql_str = re.sub(select_pattern, f'SELECT {new_select_clause} FROM', sql_str, flags=re.IGNORECASE | re.DOTALL)
-    
-    # 5. Format the SQL query for better readability
-    rewritten_query = sqlparse.format(sql_str, reindent=True, keyword_case='upper')
-    
-    return rewritten_query
+    Returns:
+        str: Rewritten SQL queries
+    """
+    return rewrite_query(sql_queries, mapping_df)
