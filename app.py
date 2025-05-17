@@ -102,18 +102,26 @@ def main():
                     map_field = row['Map_Field']
                     table_name = row['tableName']
                     
+                    # Convert pandas Series values to Python native types
+                    field_sql_str = str(field_sql) if not pd.isna(field_sql) else ""
+                    map_field_str = str(map_field) if not pd.isna(map_field) else ""
+                    table_name_str = str(table_name) if not pd.isna(table_name) else ""
+                    
                     # Check if this field appears in the original query
-                    pattern = r'(?<![a-zA-Z0-9_])' + re.escape(field_sql) + r'(?![a-zA-Z0-9_])'
-                    if re.search(pattern, original_query):
-                        if table_name:
-                            replacement = f"{table_name}.{map_field}"
-                        else:
-                            replacement = map_field
-                        
-                        field_replacements.append({
-                            'Original Field': field_sql,
-                            'Replaced With': replacement
-                        })
+                    if field_sql_str and map_field_str:
+                        pattern = r'(?<![a-zA-Z0-9_])' + re.escape(field_sql_str) + r'(?![a-zA-Z0-9_])'
+                        if re.search(pattern, original_query):
+                            # Determine the replacement text
+                            if table_name_str and table_name_str != "nan":
+                                replacement = f"{table_name_str}.{map_field_str}"
+                            else:
+                                replacement = map_field_str
+                            
+                            # Add to the list of replacements
+                            field_replacements.append({
+                                'Original Field': field_sql_str,
+                                'Replaced With': replacement
+                            })
                 
                 st.session_state.rewritten_query = rewritten_query
                 st.session_state.field_replacements = field_replacements
