@@ -103,9 +103,9 @@ def main():
                     table_name = row['tableName']
                     
                     # Convert pandas Series values to Python native types
-                    field_sql_str = str(field_sql) if not pd.isna(field_sql) else ""
-                    map_field_str = str(map_field) if not pd.isna(map_field) else ""
-                    table_name_str = str(table_name) if not pd.isna(table_name) else ""
+                    field_sql_str = str(field_sql) if pd.notna(field_sql) else ""
+                    map_field_str = str(map_field) if pd.notna(map_field) else ""
+                    table_name_str = str(table_name) if pd.notna(table_name) else ""
                     
                     # Check if this field appears in the original query
                     if field_sql_str and map_field_str:
