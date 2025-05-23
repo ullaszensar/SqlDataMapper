@@ -5,6 +5,7 @@ import re
 from sql_analyzer import extract_tables_and_fields
 from excel_handler import parse_excel_mapping
 from query_rewriter import rewrite_query, process_multiple_queries
+from sql_query_analyzer import SQLQueryAnalyzer, create_analysis_dataframe
 
 def main():
     st.set_page_config(page_title="SQL Analyzer & Rewriter", page_icon="📊", layout="wide")
@@ -28,6 +29,8 @@ def main():
         st.session_state.error_message = ""
     if 'field_replacements' not in st.session_state:
         st.session_state.field_replacements = []
+    if 'query_analysis' not in st.session_state:
+        st.session_state.query_analysis = None
     
     # Create a two-column layout for input
     col1, col2 = st.columns(2)
@@ -48,6 +51,7 @@ def main():
                 st.session_state.rewritten_query = ""
                 st.session_state.error_message = ""
                 st.session_state.field_replacements = []
+                st.session_state.query_analysis = None
         else:
             uploaded_file = st.file_uploader("Upload a SQL file", type=["sql", "txt"])
             if uploaded_file is not None:
@@ -60,6 +64,7 @@ def main():
                     st.session_state.rewritten_query = ""
                     st.session_state.error_message = ""
                     st.session_state.field_replacements = []
+                    st.session_state.query_analysis = None
     
     with col2:
         st.subheader("Step 2: Import Mapping Data")
@@ -80,6 +85,22 @@ def main():
                 st.session_state.error_message = f"Error parsing Excel file: {str(e)}"
                 st.error(st.session_state.error_message)
     
+    # Add SQL Analysis button if query is available
+    if st.session_state.query_text:
+        if st.button("Analyze SQL Queries"):
+            try:
+                # Initialize the analyzer
+                analyzer = SQLQueryAnalyzer()
+                
+                # Analyze the queries
+                analysis_results = analyzer.analyze_multiple_queries(st.session_state.query_text)
+                st.session_state.query_analysis = analysis_results
+                st.session_state.error_message = ""
+                
+            except Exception as e:
+                st.session_state.error_message = f"Error analyzing queries: {str(e)}"
+                st.error(st.session_state.error_message)
+
     # Process button if both query and Excel data are available
     if st.session_state.query_text and st.session_state.excel_data is not None:
         if st.button("Process and Rewrite SQL Query"):
@@ -89,6 +110,12 @@ def main():
                 
                 # Store original query
                 original_query = st.session_state.query_text
+                
+                # Also perform query analysis if not already done
+                if not st.session_state.query_analysis:
+                    analyzer = SQLQueryAnalyzer()
+                    analysis_results = analyzer.analyze_multiple_queries(st.session_state.query_text)
+                    st.session_state.query_analysis = analysis_results
                 
                 # Process the rewriting
                 rewritten_query = process_multiple_queries(
@@ -131,12 +158,31 @@ def main():
                 st.session_state.error_message = f"Error rewriting query: {str(e)}"
                 st.error(st.session_state.error_message)
     
+    # Display SQL Analysis Results if available
+    if st.session_state.query_analysis:
+        st.subheader("SQL Query Analysis")
+        
+        # Convert analysis to DataFrame
+        analysis_df = create_analysis_dataframe(st.session_state.query_analysis)
+        
+        # Display the analysis table
+        st.dataframe(analysis_df, use_container_width=True, hide_index=True)
+        
+        # Add download button for analysis
+        csv_data = analysis_df.to_csv(index=False)
+        st.download_button(
+            label="Download Analysis as CSV",
+            data=csv_data,
+            file_name="sql_query_analysis.csv",
+            mime="text/csv"
+        )
+    
     # Display results in a table format if available
     if st.session_state.rewritten_query and st.session_state.field_replacements:
-        st.subheader("Results")
+        st.subheader("Query Rewriting Results")
         
         # Create tabs for different views
-        tab1, tab2, tab3 = st.tabs(["Comparison Table", "Original Query", "New Query"])
+        tab1, tab2, tab3, tab4 = st.tabs(["Comparison Table", "Original Query", "New Query", "Detailed Analysis"])
         
         with tab1:
             st.markdown("### Field Replacements")
@@ -173,6 +219,14 @@ def main():
                 mime="text/plain"
             ):
                 st.success("Query downloaded successfully!")
+        
+        with tab4:
+            st.markdown("### Detailed SQL Analysis")
+            if st.session_state.query_analysis:
+                analysis_df = create_analysis_dataframe(st.session_state.query_analysis)
+                st.dataframe(analysis_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("Run SQL analysis to see detailed query information.")
     
     # Display error message if there is one
     if st.session_state.error_message:
